@@ -1,8 +1,6 @@
 #include "serialport.h"
 
-#include <errno.h>
 #include <fcntl.h>
-#include <iostream>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -68,7 +66,7 @@ SerialPort::~SerialPort() {
     ::close(m_pipe[1]);
 }
 
-SerialPort::RetCode SerialPort::open(const std::string &port) {
+SerialPort::RetCode SerialPort::open(const std::string& port) {
     if (m_fd != 0) {
         return RetCode::kAlreadyOpened;
     }
@@ -310,7 +308,7 @@ void SerialPort::close() {
     m_interruptMutex.unlock();
 }
 
-SerialPort::RetCode SerialPort::write(const void *data, size_t length) {
+SerialPort::RetCode SerialPort::write(const void* data, size_t length) {
     ssize_t bytesWritten = ::write(m_fd, data, length);
 
     if (bytesWritten == -1) {

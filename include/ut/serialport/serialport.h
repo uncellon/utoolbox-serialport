@@ -1,13 +1,31 @@
+/******************************************************************************
+ * 
+ * Copyright (C) 2022 Dmitry Plastinin
+ * Contact: uncellon@yandex.ru, uncellon@gmail.com, uncellon@mail.ru
+ * 
+ * This file is part of the UToolbox SerialPort library.
+ * 
+ * UToolbox SerialPort is free software: you can redistribute it and/or modify 
+ * it under the terms of the GNU Lesser General Public License as pubblished by
+ * the Free Software Foundation, either version 3 of the License, or (at your 
+ * option) any later version.
+ * 
+ * UToolbox SerialPort is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser Public License for 
+ * more details
+ * 
+ * You should have received a copy of the GNU Lesset General Public License
+ * along with UToolbox SerialPort. If not, see <https://www.gnu.org/licenses/>.
+ * 
+ *****************************************************************************/
+
 #ifndef UT_SERIAL_PORT
 #define UT_SERIAL_PORT
 
-#include <mutex>
-#include <string>
 #include <sys/poll.h>
 #include <termios.h>
-#include <thread>
 #include <ut/core/event.h>
-#include <vector>
 
 namespace UT {
 
@@ -19,24 +37,24 @@ public:
     enum class StopBits;
     enum class RetCode;
 
-    /***************************************************************************
+    /**************************************************************************
      * Constructors / Destructors
-     **************************************************************************/
+     *************************************************************************/
 
     SerialPort();
     ~SerialPort();
 
-    /***************************************************************************
+    /**************************************************************************
      * Public methods
-     **************************************************************************/
+     *************************************************************************/
 
     /**
      * @brief Try to open serial port device
      * 
-     * @param port path to the device file, e.g. "/dev/ttyS0", "/dev/ttyUSB0" etc
+     * @param port path to the device file, e.g. "/dev/ttyS0", "/dev/ttyUSB0", etc.
      * @return RetCode 
      */
-    RetCode open(const std::string &port);
+    RetCode open(const std::string& port);
 
     void close();
 
@@ -55,7 +73,7 @@ public:
      * driver buffer is full, 
      *     kUndefinedError - undefined error.
      */
-    RetCode write(const void *data, size_t length);
+    RetCode write(const void* data, size_t length);
 
     /**
      * @brief Write data to the serial port output buffer
@@ -66,24 +84,24 @@ public:
      * @param data data to be written
      * @param length length of data to be written
      * @return RetCode returns the following codes
-     *     SUCCESS - data written successfully, 
-     *     PORT_NOT_OPENED - method open(...) not called, 
-     *     NOT_ALL_WRITTEN - not all data was sended, may be returned when the 
+     *     kSuccess - data written successfully, 
+     *     kPortNotOpened - method open(...) not called, 
+     *     kNotAllWritten - not all data was sended, may be returned when the 
      * driver buffer is full,
-     *     UNDEFINED_ERROR - undefined error.
+     *     kUndefinedError - undefined error.
      */
-    RetCode write(const char *data, size_t length);
+    RetCode write(const char* data, size_t length);
 
-    /***************************************************************************
+    /**************************************************************************
      * Events
-     **************************************************************************/
+     *************************************************************************/
 
     Event<std::shared_ptr<char[]>, ssize_t> onData;
     Event<RetCode> onError;
 
-    /***************************************************************************
+    /**************************************************************************
      * Accessors / Mutators
-     **************************************************************************/
+     *************************************************************************/
 
     BaudRate baudRate() const;
     void setBaudRate(BaudRate baudRate);
@@ -113,8 +131,8 @@ protected:
     static std::mutex m_interruptMutex;
     static std::mutex m_mutex;               // vectors protection mutex
     static std::mutex m_threadInstanceMutex;
-    static std::thread *m_pollingThread;    // singleton thread to polling ports
-    static std::vector<SerialPort *> m_instances;    // port instances (non-static objects)
+    static std::thread* m_pollingThread;    // singleton thread to polling ports
+    static std::vector<SerialPort*> m_instances; // port instances (non-static objects)
     static std::vector<pollfd> m_pollFds;   // polling file descriptors
 
     BaudRate m_baudRate;
@@ -123,7 +141,7 @@ protected:
     StopBits m_stopBits;
     int m_fd = 0;
     termios m_options;
-};
+}; // class SerialPort
 
 enum class SerialPort::BaudRate {
     k0 = 0,
@@ -144,46 +162,46 @@ enum class SerialPort::BaudRate {
     k38400 = 38400,
     k57600 = 57600,
     k115200 = 115200
-};
+}; // enum class SerialPort::BaudRate
 
 enum class SerialPort::DataBits {
     k5 = 5,
     k6 = 6,
     k7 = 7,
     k8 = 8
-};
+}; // enum class SerialPort::DataBits
 
 enum class SerialPort::Parity {
     kNone,
     kEven,
     kOdd,
     kSpace
-};
+}; // enum class SerialPort::Parity
 
 enum class SerialPort::StopBits {
     kOne,
     kTwo
-};
+}; // enum class SerialPort::StopBits
 
 /** Return codes enumeration */
 enum class SerialPort::RetCode {
-    kSuccess = 0,                       /**< Successful operation */
-    kAlreadyOpened = 1,
-    kDeviceNotConnected = 2,
-    kNotAllWritten = 3,
-    kPortNotOpened = 4,
-    kDeviceRemovedDuringOperation = 5,
-    kReadError = 6,
-    kBufferFlushError = 7,
-    kSwitchToNonBlockingModeError = 8,
-    kFailedToGetPortOptions = 9,
-    kFailedToSetPortOptions = 10,
+    kSuccess,                       /**< Successful operation */
+    kAlreadyOpened,
+    kDeviceNotConnected,
+    kNotAllWritten,
+    kPortNotOpened,
+    kDeviceRemovedDuringOperation,
+    kReadError,
+    kBufferFlushError,
+    kSwitchToNonBlockingModeError,
+    kFailedToGetPortOptions,
+    kFailedToSetPortOptions,
     kPipeFailed,
     kUndefinedError
-};
+}; // enum class SerialPort::RetCode
 
 /*******************************************************************************
- * Inline
+ * Inline definition
  ******************************************************************************/
 
 inline SerialPort::RetCode SerialPort::write(const char *data, size_t length) { 
