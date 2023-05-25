@@ -73,7 +73,7 @@ SerialPort::~SerialPort() {
 
 SerialPort::Opcode SerialPort::open(const std::string& port) {
     if (mFd != -1) {
-        return Opcode::kAlreadyOpened;
+        return Opcode::kAlreadyOpen;
     }
 
     mFd = ::open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
@@ -81,9 +81,9 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
     if (mFd == -1) {
         switch (errno) {
         case ENOENT:
-            return Opcode::kDeviceDoesNotExist;
+            return Opcode::kDeviceNotFound;
         default:
-            return Opcode::kUndefinedError;
+            return Opcode::kSyscallError;
         }
     }
 
@@ -92,7 +92,7 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
     if (ret == -1) {
         ::close(mFd);
         mFd = -1;
-        return Opcode::kBufferFlushError;
+        return Opcode::kSyscallError;
     }
 
     // Get current serial port options
@@ -100,7 +100,7 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
     if (ret == -1) {
         ::close(mFd);
         mFd = -1;
-        return Opcode::kFailedToGetPortOptions;
+        return Opcode::kSyscallError;
     }
 
     // Set local mode and enable receiver
@@ -235,7 +235,7 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
     if (ret == -1) {
         ::close(mFd);
         mFd = -1;
-        return Opcode::kFailedToSetPortOptions;
+        return Opcode::kSyscallError;
     }
 
     // Send interrupt and push new instance with polling fd
@@ -286,9 +286,9 @@ SerialPort::Opcode SerialPort::write(const void* data, size_t length) {
     if (bytesWritten == -1) {
         switch (errno) {
         case EBADF:
-            return Opcode::kPortNotOpened;
+            return Opcode::kDeviceNotOpen;
         default:
-            return Opcode::kUndefinedError;
+            return Opcode::kSyscallError;
         }
     }
 
@@ -356,7 +356,7 @@ void SerialPort::polling() {
                     }
 
                     if (ret == 0) {
-                        mInstances[i]->onError(Opcode::kDeviceRemovedDuringOperation);
+                        mInstances[i]->onError(Opcode::kDeviceRemoved);
                     } else if (ret == -1) {
                         mInstances[i]->onError(Opcode::kReadError);
                     }

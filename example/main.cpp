@@ -22,7 +22,7 @@ int main(int argc, char* argv[]) {
         EventLoop::getMainInstance(), 
         [] (SerialPort::Opcode code) {
             switch (code) {
-            case SerialPort::Opcode::kDeviceRemovedDuringOperation:
+            case SerialPort::Opcode::kDeviceRemoved:
                 std::cout << "Device removed during operation\n";
                 break;        
             default:
@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
     auto ret = sp.open("/dev/ttyUSB0");
     if (ret != SerialPort::Opcode::kSuccess) {
         switch (ret) {
-        case SerialPort::Opcode::kDeviceDoesNotExist:
+        case SerialPort::Opcode::kDeviceNotFound:
             std::cout << "Device not connected!\n";
             break;
         default:

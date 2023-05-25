@@ -53,15 +53,14 @@ public:
     /**
      * @brief Try to open serial port device
      * 
-     * @param port path to the device file, e.g. "/dev/ttyS0", "/dev/ttyUSB0", etc.
+     * @param port path to the device file, e.g. "/dev/ttyS0", "/dev/ttyUSB0", 
+     * etc.
      * @return SerialPort::Opcode 
      *     - kSuccess - device successfully opened
-     *     - kAlreadyOpened - device already open by this instance
-     *     - kDeviceDoesNotExist - device not connected
-     *     - kBufferFlushError - ioctl(..., TCFLSH, TCIOFLUSH) failed
-     *     - kFailedToGetPortOptions - tcgetattr(...) failed
-     *     - kFailedToSetPortOptions - tcsetattr(...) failed
-     *     - kUndefinedError - undefined error
+     *     - kAlreadyOpen - device already open by this instance
+     *     - kDeviceNotFound - device not exist
+     *     - kSyscallError - open(...), ioctl(...), tcgetattr(...) or 
+     * tcsetattr(...) failed
      */
     Opcode open(const std::string& port);
 
@@ -75,12 +74,12 @@ public:
      * 
      * @param data data to be written
      * @param length length of data to be written
-     * @return Opcode returns the following codes
+     * @return SerialPort::Opcode returns the following codes
      *     - kSuccess - data written successfully
-     *     - kPortNotOpened - method open(...) not called
+     *     - kDeviceNotOpen - serial device is not open
      *     - kNotAllWritten - not all data was sended, may be returned when the 
      * driver buffer is full
-     *     - kUndefinedError - undefined error
+     *     - kSyscallError - write(...) failed
      */
     Opcode write(const void* data, size_t length);
 
@@ -184,16 +183,13 @@ enum class SerialPort::StopBits {
 /** Return codes enumeration */
 enum class SerialPort::Opcode {
     kSuccess,                       /**< Successful operation */
-    kAlreadyOpened,
-    kDeviceDoesNotExist,
+    kAlreadyOpen,
+    kDeviceNotFound,
+    kDeviceNotOpen,
+    kDeviceRemoved,
     kNotAllWritten,
-    kPortNotOpened,
-    kDeviceRemovedDuringOperation,
     kReadError,
-    kBufferFlushError,
-    kFailedToGetPortOptions,
-    kFailedToSetPortOptions,
-    kUndefinedError
+    kSyscallError
 }; // enum class SerialPort::Opcode
 
 /*******************************************************************************
