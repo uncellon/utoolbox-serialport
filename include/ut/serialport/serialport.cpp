@@ -7,324 +7,305 @@
 
 namespace UT {
 
-bool SerialPort::m_threadRunning = false;
-int SerialPort::m_pipe[2] = { 0, 0 };
-std::mutex SerialPort::m_interruptMutex;
-std::mutex SerialPort::m_mutex;
-std::mutex SerialPort::m_threadInstanceMutex;
-std::thread *SerialPort::m_pollingThread = nullptr;
-std::vector<SerialPort *> SerialPort::m_instances;
-std::vector<pollfd> SerialPort::m_pollFds;
+bool SerialPort::mRunning = false;
+int SerialPort::mPipe[2] = { 0, 0 };
+std::mutex SerialPort::mInterruptMutex;
+std::mutex SerialPort::mMutex;
+std::mutex SerialPort::mCdtorsMutex;
+std::thread *SerialPort::mSerialThread = nullptr;
+std::vector<SerialPort *> SerialPort::mInstances;
+std::vector<pollfd> SerialPort::mPfds;
 
 SerialPort::SerialPort()
-: m_baudRate(BaudRate::k115200),
-  m_dataBits(DataBits::k8),
-  m_parity(Parity::kNone),
-  m_stopBits(StopBits::kOne) {
-    memset(&m_options, 0, sizeof(m_options));
+: mBaudRate(BaudRate::k115200),
+  mDataBits(DataBits::k8),
+  mParity(Parity::kNone),
+  mStopBits(StopBits::kOne) {
+    memset(&mOptions, 0, sizeof(mOptions));
 
-    m_threadInstanceMutex.lock();
-    if (!m_pollingThread) {
-        // Create pipes
-        auto ret = pipe(m_pipe);
-        if (ret == -1) {
-            throw std::runtime_error("pipe(...) failed");
-        }
+    std::unique_lock lock(mCdtorsMutex);
 
-        // Insert null-instance and pipe polling fd
-        m_pollFds.clear();
-        m_instances.clear();
-
-        m_pollFds.emplace_back(pollfd { m_pipe[0], POLLIN, 0 });
-        m_instances.emplace_back(nullptr);
-
-        // Start polling thread
-        m_threadRunning = true;
-        m_pollingThread = new std::thread(polling);
+    if (mSerialThread) {
+        return;
     }
-    m_threadInstanceMutex.unlock();
+
+    // Create pipes
+    auto ret = pipe(mPipe);
+    if (ret == -1) {
+        throw std::runtime_error("pipe(...) failed");
+    }
+    ret = ioctl(mPipe[0], F_GETFL);
+    if (ret == -1) {
+        throw std::runtime_error("ioctl(..., F_GETFL, ...) failed");
+    }
+    ret = ioctl(mPipe[0], F_SETFL, ret | O_NONBLOCK);
+    if (ret == -1) {
+        throw std::runtime_error("ioctl(..., F_SETFL, ...) failed");
+    }
+
+    // Insert null-instance and pipe polling fd
+    mPfds.clear();
+    mInstances.clear();
+
+    mPfds.emplace_back(pollfd { mPipe[0], POLLIN, 0 });
+    mInstances.emplace_back(nullptr);
+
+    // Start polling thread
+    mRunning = true;
+    mSerialThread = new std::thread(polling);
 }
 
 SerialPort::~SerialPort() {
     close();
 
-    std::unique_lock lock(m_threadInstanceMutex);
-    if (m_pollFds.size()) {
+    std::unique_lock lock(mCdtorsMutex);
+
+    if (mPfds.size()) {
         return;
     }
 
     // Send interrupt and delete thread
-    m_threadRunning = false;
+    mRunning = false;
     char code = '0';
-    ::write(m_pipe[1], &code, sizeof(code));
-    m_pollingThread->join();
-    delete m_pollingThread;
-    m_pollingThread = nullptr;
+    ::write(mPipe[1], &code, sizeof(code));
+    if (mSerialThread) {
+        mSerialThread->join();
+    }
+    delete mSerialThread;
+    mSerialThread = nullptr;
 
     // Close pipes
-    ::close(m_pipe[0]);
-    ::close(m_pipe[1]);
+    ::close(mPipe[0]);
+    ::close(mPipe[1]);
 }
 
-SerialPort::RetCode SerialPort::open(const std::string& port) {
-    if (m_fd != 0) {
-        return RetCode::kAlreadyOpened;
+SerialPort::Opcode SerialPort::open(const std::string& port) {
+    if (mFd != 0) {
+        return Opcode::kAlreadyOpened;
     }
 
-    m_fd = ::open(port.c_str(), O_RDWR | O_NOCTTY | O_NDELAY);
+    mFd = ::open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
 
-    if (m_fd == -1) {
-        m_fd = 0;
+    if (mFd == -1) {
+        mFd = 0;
         switch (errno) {
         case ENOENT:
-            return RetCode::kDeviceNotConnected;
+            return Opcode::kDeviceNotConnected;
         default:
-            return RetCode::kUndefinedError;
+            return Opcode::kUndefinedError;
         }
     }
 
     // Clear I/O buffers
-    auto ret = ioctl(m_fd, TCFLSH, 2);
+    auto ret = ioctl(mFd, TCFLSH, TCIOFLUSH);
     if (ret == -1) {
-        ::close(m_fd);
-        m_fd = 0;
-        return RetCode::kBufferFlushError;
-    }
-
-    // Set descriptor to non-blocking mode
-    ret = fcntl(m_fd, F_SETFL, FNDELAY);
-    if (ret == -1) {
-        ::close(m_fd);
-        m_fd = 0;
-        return RetCode::kSwitchToNonBlockingModeError;
+        ::close(mFd);
+        mFd = 0;
+        return Opcode::kBufferFlushError;
     }
 
     // Get current serial port options
-    ret = tcgetattr(m_fd, &m_options);
+    ret = tcgetattr(mFd, &mOptions);
     if (ret == -1) {
-        ::close(m_fd);
-        m_fd = 0;
-        return RetCode::kFailedToGetPortOptions;
+        ::close(mFd);
+        mFd = 0;
+        return Opcode::kFailedToGetPortOptions;
     }
 
     // Set local mode and enable receiver
-    m_options.c_cflag |= (CLOCAL | CREAD);
+    mOptions.c_cflag |= (CLOCAL | CREAD);
 
     // To raw mode
-    cfmakeraw(&m_options);
+    cfmakeraw(&mOptions);
 
     // Set speed (baud)
-    switch (m_baudRate) {
+    switch (mBaudRate) {
     case BaudRate::k0:
-        cfsetispeed(&m_options, B0);
-        cfsetospeed(&m_options, B0);
-        break;
-        
+        cfsetispeed(&mOptions, B0);
+        cfsetospeed(&mOptions, B0);
+        break;        
     case BaudRate::k50:
-        cfsetispeed(&m_options, B50);
-        cfsetospeed(&m_options, B50);
+        cfsetispeed(&mOptions, B50);
+        cfsetospeed(&mOptions, B50);
         break;
-
     case BaudRate::k75:
-        cfsetispeed(&m_options, B75);
-        cfsetospeed(&m_options, B75);
+        cfsetispeed(&mOptions, B75);
+        cfsetospeed(&mOptions, B75);
         break;
-
     case BaudRate::k110:
-        cfsetispeed(&m_options, B110);
-        cfsetospeed(&m_options, B110);
+        cfsetispeed(&mOptions, B110);
+        cfsetospeed(&mOptions, B110);
         break;
-
     case BaudRate::k134:
-        cfsetispeed(&m_options, B134);
-        cfsetospeed(&m_options, B134);
+        cfsetispeed(&mOptions, B134);
+        cfsetospeed(&mOptions, B134);
         break;
-
     case BaudRate::k150:
-        cfsetispeed(&m_options, B150);
-        cfsetospeed(&m_options, B150);
+        cfsetispeed(&mOptions, B150);
+        cfsetospeed(&mOptions, B150);
         break;
-
     case BaudRate::k200:
-        cfsetispeed(&m_options, B200);
-        cfsetospeed(&m_options, B200);
+        cfsetispeed(&mOptions, B200);
+        cfsetospeed(&mOptions, B200);
         break;
-
     case BaudRate::k300:
-        cfsetispeed(&m_options, B300);
-        cfsetospeed(&m_options, B300);
+        cfsetispeed(&mOptions, B300);
+        cfsetospeed(&mOptions, B300);
         break;
-
     case BaudRate::k600:
-        cfsetispeed(&m_options, B600);
-        cfsetospeed(&m_options, B600);
+        cfsetispeed(&mOptions, B600);
+        cfsetospeed(&mOptions, B600);
         break;
-
     case BaudRate::k1200:
-        cfsetispeed(&m_options, B1200);
-        cfsetospeed(&m_options, B1200);
+        cfsetispeed(&mOptions, B1200);
+        cfsetospeed(&mOptions, B1200);
         break;
-
     case BaudRate::k1800:
-        cfsetispeed(&m_options, B1800);
-        cfsetospeed(&m_options, B1800);
+        cfsetispeed(&mOptions, B1800);
+        cfsetospeed(&mOptions, B1800);
         break;
-
     case BaudRate::k2400:
-        cfsetispeed(&m_options, B2400);
-        cfsetospeed(&m_options, B2400);
+        cfsetispeed(&mOptions, B2400);
+        cfsetospeed(&mOptions, B2400);
         break;
-
     case BaudRate::k4800:
-        cfsetispeed(&m_options, B4800);
-        cfsetospeed(&m_options, B4800);
+        cfsetispeed(&mOptions, B4800);
+        cfsetospeed(&mOptions, B4800);
         break;
-
     case BaudRate::k9600:
-        cfsetispeed(&m_options, B9600);
-        cfsetospeed(&m_options, B9600);
+        cfsetispeed(&mOptions, B9600);
+        cfsetospeed(&mOptions, B9600);
         break;
-
     case BaudRate::k19200:
-        cfsetispeed(&m_options, B19200);
-        cfsetospeed(&m_options, B19200);
+        cfsetispeed(&mOptions, B19200);
+        cfsetospeed(&mOptions, B19200);
         break;
-
     case BaudRate::k38400:
-        cfsetispeed(&m_options, B38400);
-        cfsetospeed(&m_options, B38400);
+        cfsetispeed(&mOptions, B38400);
+        cfsetospeed(&mOptions, B38400);
         break;
-
     case BaudRate::k57600:
-        cfsetispeed(&m_options, B57600);
-        cfsetospeed(&m_options, B57600);
-        break;
-    
+        cfsetispeed(&mOptions, B57600);
+        cfsetospeed(&mOptions, B57600);
+        break;    
     case BaudRate::k115200:
-        cfsetispeed(&m_options, B115200);
-        cfsetospeed(&m_options, B115200);
+        cfsetispeed(&mOptions, B115200);
+        cfsetospeed(&mOptions, B115200);
         break;
     } // switch (m_baudRate)
 
     // Set data bits
     // options_.c_cflag &= ~CSIZE; // WTF this doesn't support by kernel
-    switch (m_dataBits) {    
+    switch (mDataBits) {    
     case DataBits::k5:
-        m_options.c_cflag |= CS5;
-        break;
-    
+        mOptions.c_cflag |= CS5;
+        break;    
     case DataBits::k6:
-        m_options.c_cflag |= CS6;
-        break;
-    
+        mOptions.c_cflag |= CS6;
+        break;    
     case DataBits::k7:        
-        m_options.c_cflag |= CS7;
-        break;
-    
+        mOptions.c_cflag |= CS7;
+        break;    
     case DataBits::k8:
-        m_options.c_cflag |= CS8;
+        mOptions.c_cflag |= CS8;
         break;
     } // switch (m_dataBits)  
 
     // Set parity
-    switch (m_parity) {
+    switch (mParity) {
     case Parity::kNone:
-        m_options.c_cflag &= ~PARENB;
+        mOptions.c_cflag &= ~PARENB;
         break;
-
     case Parity::kEven:
-        m_options.c_cflag |= PARENB;
-        m_options.c_cflag &= ~PARODD;
+        mOptions.c_cflag |= PARENB;
+        mOptions.c_cflag &= ~PARODD;
         break;
-
     case Parity::kOdd:
-        m_options.c_cflag |= PARENB;
-        m_options.c_cflag |= PARODD;
+        mOptions.c_cflag |= PARENB;
+        mOptions.c_cflag |= PARODD;
         break;
-
     case Parity::kSpace:
-        m_options.c_cflag &= ~PARENB;
+        mOptions.c_cflag &= ~PARENB;
         break;
     } // switch (m_parity)
 
     // Set stop bits
-    switch(m_stopBits) {
+    switch(mStopBits) {
     case StopBits::kOne:
-        m_options.c_cflag &= ~CSTOPB;
-        break;
-    
+        mOptions.c_cflag &= ~CSTOPB;
+        break;    
     case StopBits::kTwo:
-        m_options.c_cflag |= CSTOPB;
+        mOptions.c_cflag |= CSTOPB;
         break;
     } // switch (m_stopBits)
 
     // Apply options
-    ret = tcsetattr(m_fd, TCSANOW, &m_options);
+    ret = tcsetattr(mFd, TCSANOW, &mOptions);
     if (ret == -1) {
-        ::close(m_fd);
-        m_fd = 0;
-        return RetCode::kFailedToSetPortOptions;
+        ::close(mFd);
+        mFd = 0;
+        return Opcode::kFailedToSetPortOptions;
     }
 
     // Send interrupt and push new instance with polling fd
-    m_interruptMutex.lock();
+    mInterruptMutex.lock();
     char code = '0';
-    ::write(m_pipe[1], &code, sizeof(code));
+    ::write(mPipe[1], &code, sizeof(code));
 
-    m_mutex.lock();
-    m_pollFds.emplace_back(pollfd { m_fd, POLLIN, 0 });
-    m_instances.emplace_back(this);
+    mMutex.lock();
+    mPfds.emplace_back(pollfd { mFd, POLLIN, 0 });
+    mInstances.emplace_back(this);
 
-    m_mutex.unlock();
-    m_interruptMutex.unlock();
+    mMutex.unlock();
+    mInterruptMutex.unlock();
 
-    return RetCode::kSuccess;
+    return Opcode::kSuccess;
 }
 
 void SerialPort::close() {
-    if (m_fd == 0) {
+    if (mFd == 0) {
         return;
     }
 
     // Send interrupt and remove instance with polling fd
-    m_interruptMutex.lock();
+    mInterruptMutex.lock();
     char code = '0';
-    ::write(m_pipe[1], &code, sizeof(code));
+    ::write(mPipe[1], &code, sizeof(code));
 
-    m_mutex.lock();
-    for (size_t i = 1; i < m_pollFds.size(); ++i) {
-        if (m_pollFds[i].fd != m_fd) {
+    mMutex.lock();
+    for (size_t i = 1; i < mPfds.size(); ++i) {
+        if (mPfds[i].fd != mFd) {
             continue;
         }
-        m_pollFds.erase(m_pollFds.begin() + i);
-        m_instances.erase(m_instances.begin() + i);
+        mPfds.erase(mPfds.begin() + i);
+        mInstances.erase(mInstances.begin() + i);
         break;
     }
 
-    ::close(m_fd);
-    m_fd = 0;
+    ::close(mFd);
+    mFd = 0;
 
-    m_mutex.unlock();
-    m_interruptMutex.unlock();
+    mMutex.unlock();
+    mInterruptMutex.unlock();
 }
 
-SerialPort::RetCode SerialPort::write(const void* data, size_t length) {
-    ssize_t bytesWritten = ::write(m_fd, data, length);
+SerialPort::Opcode SerialPort::write(const void* data, size_t length) {
+    ssize_t bytesWritten = ::write(mFd, data, length);
 
     if (bytesWritten == -1) {
         switch (errno) {
         case EBADF:
-            return RetCode::kPortNotOpened;
+            return Opcode::kPortNotOpened;
         default:
-            return RetCode::kUndefinedError;
+            return Opcode::kUndefinedError;
         }
     }
 
     if (static_cast<size_t>(bytesWritten) < length) {
-        return RetCode::kNotAllWritten;
+        return Opcode::kNotAllWritten;
     }
 
-    return RetCode::kSuccess;
+    return Opcode::kSuccess;
 }
 
 /******************************************************************************
@@ -339,61 +320,61 @@ void SerialPort::polling() {
     ssize_t bytesRead = 0;
     std::shared_ptr<char[]> buffer(new char[bufferSize]);
 
-    while (m_threadRunning) {
-        m_mutex.lock();
-        ret = poll(m_pollFds.data(), m_pollFds.size(), -1);
-        m_mutex.unlock();
+    while (mRunning) {
+        mMutex.lock();
+        ret = poll(mPfds.data(), mPfds.size(), -1);
+        mMutex.unlock();
 
         if (ret < 1) {
             continue;
         }
         
         // Check "soft" interrupt
-        if (m_pollFds[0].revents & POLLIN) {
-            m_interruptMutex.lock();
-            m_pollFds[0].revents = 0;
-            read(m_pipe[0], &interrupt, sizeof(interrupt));
-            m_interruptMutex.unlock();
+        if (mPfds[0].revents & POLLIN) {
+            mInterruptMutex.lock();
+            mPfds[0].revents = 0;
+            read(mPipe[0], &interrupt, sizeof(interrupt));
+            mInterruptMutex.unlock();
             continue;
         }
 
-        m_mutex.lock();
-        for (i = 1; i < m_pollFds.size(); ++i) {
-            if (!m_pollFds[i].revents & POLLIN) {
+        mMutex.lock();
+        for (i = 1; i < mPfds.size(); ++i) {
+            if (!mPfds[i].revents & POLLIN) {
                 continue;
             }
             
-            m_pollFds[i].revents = 0;
+            mPfds[i].revents = 0;
 
-            bytesRead = read(m_pollFds[i].fd, buffer.get(), bufferSize);
+            bytesRead = read(mPfds[i].fd, buffer.get(), bufferSize);
 
             if (bytesRead <= 0) {
                 // Send error
                 switch (bytesRead) {
                 case 0:
-                    m_instances[i]->onError(RetCode::kDeviceRemovedDuringOperation);
+                    mInstances[i]->onError(Opcode::kDeviceRemovedDuringOperation);
                     break;
 
                 case -1:
-                    m_instances[i]->onError(RetCode::kReadError);
+                    mInstances[i]->onError(Opcode::kReadError);
                     break;
                 }
 
                 // Close serial port
-                ::close(m_instances[i]->m_fd);
-                m_instances[i]->m_fd = 0;
+                ::close(mInstances[i]->mFd);
+                mInstances[i]->mFd = 0;
                 
-                m_pollFds.erase(m_pollFds.begin() + i);
-                m_instances.erase(m_instances.begin() + i);
+                mPfds.erase(mPfds.begin() + i);
+                mInstances.erase(mInstances.begin() + i);
                 --i;
                 continue;
             }
 
             // Send data and allocate new buffer
-            m_instances[i]->onData(buffer, bytesRead);
+            mInstances[i]->onData(buffer, bytesRead);
             buffer = std::shared_ptr<char[]>(new char[bufferSize]);
         }
-        m_mutex.unlock();
+        mMutex.unlock();
     }
 }
 

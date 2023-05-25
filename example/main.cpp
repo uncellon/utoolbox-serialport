@@ -22,9 +22,9 @@ int main(int argc, char* argv[]) {
     sp.setStopBits(SerialPort::StopBits::kOne);
 
     auto ret = sp.open("/dev/ttyUSB0");
-    if (ret != SerialPort::RetCode::kSuccess) {
+    if (ret != SerialPort::Opcode::kSuccess) {
         switch (ret) {
-        case SerialPort::RetCode::kDeviceNotConnected:
+        case SerialPort::Opcode::kDeviceNotConnected:
             std::cout << "Device not connected!\n";
             return EXIT_FAILURE;
         default:
@@ -35,8 +35,8 @@ int main(int argc, char* argv[]) {
         std::cout << "Serial port ttyUSB0 opened\n";
     }
 
-    sp.onData.addEventHandler(&mainLoop, [] (std::shared_ptr<char[]> data, size_t length) {
-        auto cdata = data.get();
+    sp.onData.addEventHandler(&mainLoop, [] (std::shared_ptr<void> data, size_t length) {
+        auto cdata = static_cast<char*>(data.get());
         std::cout << "Bytes read: " << std::to_string(length) << std::endl << "data: ";
         for (size_t i = 0; i < length; ++i) {
             std::cout << std::setfill('0') << std::setw(2) << std::hex << int(cdata[i]) << " ";
@@ -45,9 +45,9 @@ int main(int argc, char* argv[]) {
         cv.notify_one();
     });
 
-    sp.onError.addEventHandler(&mainLoop, [] (SerialPort::RetCode code) {
+    sp.onError.addEventHandler(&mainLoop, [] (SerialPort::Opcode code) {
         switch (code) {
-        case SerialPort::RetCode::kDeviceRemovedDuringOperation:
+        case SerialPort::Opcode::kDeviceRemovedDuringOperation:
             std::cout << "Device removed during operation\n";
             break;
         
@@ -69,7 +69,7 @@ int main(int argc, char* argv[]) {
 
     // send weight request
     auto result = sp.write(weightRequest, 14);
-    if (result != SerialPort::RetCode::kSuccess) {
+    if (result != SerialPort::Opcode::kSuccess) {
         std::cout << "Write error occured\n";
     }
     std::cout << "Weight request sended\n";
