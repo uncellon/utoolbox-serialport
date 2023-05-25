@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
     auto ret = sp.open("/dev/ttyUSB0");
     if (ret != SerialPort::Opcode::kSuccess) {
         switch (ret) {
-        case SerialPort::Opcode::kDeviceNotConnected:
+        case SerialPort::Opcode::kDeviceDoesNotExist:
             std::cout << "Device not connected!\n";
             return EXIT_FAILURE;
         default:

@@ -42,6 +42,8 @@ public:
      *************************************************************************/
 
     SerialPort();
+    SerialPort(const SerialPort& other) = delete;
+    SerialPort(SerialPort&& other) = delete;
     ~SerialPort();
 
     /**************************************************************************
@@ -52,7 +54,14 @@ public:
      * @brief Try to open serial port device
      * 
      * @param port path to the device file, e.g. "/dev/ttyS0", "/dev/ttyUSB0", etc.
-     * @return Opcode 
+     * @return SerialPort::Opcode 
+     *     - kSuccess - device successfully opened
+     *     - kAlreadyOpened - device already open by this instance
+     *     - kDeviceDoesNotExist - device not connected
+     *     - kBufferFlushError - ioctl(..., TCFLSH, TCIOFLUSH) failed
+     *     - kFailedToGetPortOptions - tcgetattr(...) failed
+     *     - kFailedToSetPortOptions - tcsetattr(...) failed
+     *     - kUndefinedError - undefined error
      */
     Opcode open(const std::string& port);
 
@@ -67,28 +76,16 @@ public:
      * @param data data to be written
      * @param length length of data to be written
      * @return Opcode returns the following codes
-     *     kSuccess - data written successfully, 
-     *     kPortNotOpened - method open(...) not called, 
-     *     kNotAllWritten - not all data was sended, may be returned when the 
-     * driver buffer is full, 
-     *     kUndefinedError - undefined error.
+     *     - kSuccess - data written successfully
+     *     - kPortNotOpened - method open(...) not called
+     *     - kNotAllWritten - not all data was sended, may be returned when the 
+     * driver buffer is full
+     *     - kUndefinedError - undefined error
      */
     Opcode write(const void* data, size_t length);
 
     /**
-     * @brief Write data to the serial port output buffer
-     * 
-     * This method is non-blocking and return code immediately. Serial port
-     * driver is responsible for buffering and data transfer.
-     * 
-     * @param data data to be written
-     * @param length length of data to be written
-     * @return Opcode returns the following codes
-     *     kSuccess - data written successfully, 
-     *     kPortNotOpened - method open(...) not called, 
-     *     kNotAllWritten - not all data was sended, may be returned when the 
-     * driver buffer is full,
-     *     kUndefinedError - undefined error.
+     * @brief Helper for write(const void* data, size_t length)
      */
     Opcode write(const char* data, size_t length);
 
@@ -126,14 +123,14 @@ protected:
      * Members
      *************************************************************************/
 
-    static bool mRunning;            // thread quit confition
+    static bool mRunning;
     static int mPipe[2];
     static std::mutex mInterruptMutex;
-    static std::mutex mMutex;               // vectors protection mutex
+    static std::mutex mMutex;
     static std::mutex mCdtorsMutex;
-    static std::thread* mSerialThread;    // singleton thread to polling ports
-    static std::vector<SerialPort*> mInstances; // port instances (non-static objects)
-    static std::vector<pollfd> mPfds;   // polling file descriptors
+    static std::thread* mSerialThread;
+    static std::vector<SerialPort*> mInstances;
+    static std::vector<pollfd> mPfds;
 
     BaudRate mBaudRate;
     DataBits mDataBits;
@@ -188,7 +185,7 @@ enum class SerialPort::StopBits {
 enum class SerialPort::Opcode {
     kSuccess,                       /**< Successful operation */
     kAlreadyOpened,
-    kDeviceNotConnected,
+    kDeviceDoesNotExist,
     kNotAllWritten,
     kPortNotOpened,
     kDeviceRemovedDuringOperation,

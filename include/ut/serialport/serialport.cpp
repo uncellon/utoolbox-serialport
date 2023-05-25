@@ -90,7 +90,7 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
         mFd = 0;
         switch (errno) {
         case ENOENT:
-            return Opcode::kDeviceNotConnected;
+            return Opcode::kDeviceDoesNotExist;
         default:
             return Opcode::kUndefinedError;
         }
