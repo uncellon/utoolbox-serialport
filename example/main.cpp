@@ -1,85 +1,64 @@
+#include <iostream>
+#include <unistd.h>
 #include <ut/serialport/serialport.h>
 
-#include <cmath>
-#include <string>
-#include <iomanip>
-#include <fcntl.h>
-#include <unistd.h>
-#include <iostream>
-#include <termios.h>
-
 using namespace UT;
-
-std::condition_variable cv;
 
 int main(int argc, char* argv[]) {
     EventLoop mainLoop;
 
     SerialPort sp;
     sp.setBaudRate(SerialPort::BaudRate::k115200);
-    sp.setDataBits(SerialPort::DataBits::k6);
+    sp.setDataBits(SerialPort::DataBits::k8);
     sp.setParity(SerialPort::Parity::kNone);
     sp.setStopBits(SerialPort::StopBits::kOne);
+
+    sp.onData.addEventHandler(
+        EventLoop::getMainInstance(), 
+        [] (std::shared_ptr<void> data, size_t length) {
+            std::cout << "Received: " << static_cast<char*>(data.get()) << std::endl;
+        }
+    );
+
+    sp.onError.addEventHandler(
+        EventLoop::getMainInstance(), 
+        [] (SerialPort::Opcode code) {
+            switch (code) {
+            case SerialPort::Opcode::kDeviceRemovedDuringOperation:
+                std::cout << "Device removed during operation\n";
+                break;        
+            default:
+                break;
+            }
+        }
+    );
 
     auto ret = sp.open("/dev/ttyUSB0");
     if (ret != SerialPort::Opcode::kSuccess) {
         switch (ret) {
         case SerialPort::Opcode::kDeviceDoesNotExist:
             std::cout << "Device not connected!\n";
-            return EXIT_FAILURE;
+            break;
         default:
             std::cout << "Serial port open failed: unknown error\n";
+            break;
+        }
+        return EXIT_FAILURE;
+    }
+
+    // Arduino boot delay
+    sleep(2);
+
+    for (int i = 0; i < 10; ++i) {
+        ret = sp.write("WND", 3);
+        if (ret != SerialPort::Opcode::kSuccess) {
+            std::cout << "Error occured\n";
             return EXIT_FAILURE;
         }
-    } else {
-        std::cout << "Serial port ttyUSB0 opened\n";
+        sleep(1);
     }
 
-    sp.onData.addEventHandler(&mainLoop, [] (std::shared_ptr<void> data, size_t length) {
-        auto cdata = static_cast<char*>(data.get());
-        std::cout << "Bytes read: " << std::to_string(length) << std::endl << "data: ";
-        for (size_t i = 0; i < length; ++i) {
-            std::cout << std::setfill('0') << std::setw(2) << std::hex << int(cdata[i]) << " ";
-        }
-        std::cout << std::endl;
-        cv.notify_one();
-    });
+    sleep(2);
 
-    sp.onError.addEventHandler(&mainLoop, [] (SerialPort::Opcode code) {
-        switch (code) {
-        case SerialPort::Opcode::kDeviceRemovedDuringOperation:
-            std::cout << "Device removed during operation\n";
-            break;
-        
-        default:
-            break;
-        }
-    });
-
-    auto weightRequest = "\x47\x44\x08\x00\x53\x45\x52\x3F\x52\x23\x40\x02\x48\xC4"; // length 14
-    auto taringRequest = "\x47\x44\x0C\x00\x53\x45\x52\x3F\x57\x23\x20\x01\x00\x00\x00\x00\xDE\x06"; // length 18
-
-    // send taring request
-    sp.write(taringRequest, 18);
-    std::cout << "Taring request sended\n";
-    // taring response 47 44 08 00 A4 A2 5E 54 57 45 20 01 3C BF
-
-    // sleep for 1 second
-    sleep(1);
-
-    // send weight request
-    auto result = sp.write(weightRequest, 14);
-    if (result != SerialPort::Opcode::kSuccess) {
-        std::cout << "Write error occured\n";
-    }
-    std::cout << "Weight request sended\n";
-    // weight response 47 44 0C 00 A4 A2 5E 54 52 45 40 02 00 00 00 00 B5 EF
-    //                 47 44 0C 00 A4 A2 5E 54 52 45 40 02 A2 FF FF FF A7 D7
-    //                 47 44 0C 00 A4 A2 5E 54 52 45 40 02 8A 03 00 00 6F F7
-
-    std::mutex mutex;
-    std::unique_lock lock(mutex);
-    cv.wait(lock);
-
-    return 0;
+    return EXIT_SUCCESS;
 }

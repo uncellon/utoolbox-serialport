@@ -30,17 +30,9 @@ SerialPort::SerialPort()
     }
 
     // Create pipes
-    auto ret = pipe(mPipe);
+    auto ret = pipe2(mPipe, O_NONBLOCK);
     if (ret == -1) {
         throw std::runtime_error("pipe(...) failed");
-    }
-    ret = ioctl(mPipe[0], F_GETFL);
-    if (ret == -1) {
-        throw std::runtime_error("ioctl(..., F_GETFL, ...) failed");
-    }
-    ret = ioctl(mPipe[0], F_SETFL, ret | O_NONBLOCK);
-    if (ret == -1) {
-        throw std::runtime_error("ioctl(..., F_SETFL, ...) failed");
     }
 
     // Insert null-instance and pipe polling fd
@@ -290,6 +282,10 @@ void SerialPort::close() {
 }
 
 SerialPort::Opcode SerialPort::write(const void* data, size_t length) {
+    if (!mFd) {
+        return Opcode::kPortNotOpened;
+    }
+
     ssize_t bytesWritten = ::write(mFd, data, length);
 
     if (bytesWritten == -1) {
@@ -314,11 +310,9 @@ SerialPort::Opcode SerialPort::write(const void* data, size_t length) {
 
 void SerialPort::polling() {
     char interrupt;
-    int bufferSize = 1024;
+    int kBufferSize = 1024;
     int ret = 0;
     size_t i = 0;
-    ssize_t bytesRead = 0;
-    std::shared_ptr<char[]> buffer(new char[bufferSize]);
 
     while (mRunning) {
         mMutex.lock();
@@ -332,8 +326,11 @@ void SerialPort::polling() {
         // Check "soft" interrupt
         if (mPfds[0].revents & POLLIN) {
             mInterruptMutex.lock();
-            mPfds[0].revents = 0;
-            read(mPipe[0], &interrupt, sizeof(interrupt));
+            mPfds[0].revents = 0;            
+            do {
+                ret = read(mPipe[0], &interrupt, sizeof(interrupt));
+            } while (ret > 0);
+            
             mInterruptMutex.unlock();
             continue;
         }
@@ -346,33 +343,40 @@ void SerialPort::polling() {
             
             mPfds[i].revents = 0;
 
-            bytesRead = read(mPfds[i].fd, buffer.get(), bufferSize);
+            while (true) {
+                void* data = malloc(kBufferSize);
 
-            if (bytesRead <= 0) {
-                // Send error
-                switch (bytesRead) {
-                case 0:
-                    mInstances[i]->onError(Opcode::kDeviceRemovedDuringOperation);
-                    break;
+                ret = read(mPfds[i].fd, data, kBufferSize);
+                if (ret > 0) {
+                    mInstances[i]->onData(std::shared_ptr<void>(data, [] (void* data) { free(data); }), ret);
+                    
+                    if (ret == kBufferSize) {
+                        continue;
+                    }
+                } else {
+                    free(data);
 
-                case -1:
-                    mInstances[i]->onError(Opcode::kReadError);
-                    break;
+                    if (ret == -1 && errno == EAGAIN) {
+                        break;
+                    }
+
+                    if (ret == 0) {
+                        mInstances[i]->onError(Opcode::kDeviceRemovedDuringOperation);
+                    } else if (ret == -1) {
+                        mInstances[i]->onError(Opcode::kReadError);
+                    }
+
+                    // Close serial port
+                    ::close(mInstances[i]->mFd);
+                    mInstances[i]->mFd = 0;
+                    
+                    mPfds.erase(mPfds.begin() + i);
+                    mInstances.erase(mInstances.begin() + i);
+                    --i;
                 }
 
-                // Close serial port
-                ::close(mInstances[i]->mFd);
-                mInstances[i]->mFd = 0;
-                
-                mPfds.erase(mPfds.begin() + i);
-                mInstances.erase(mInstances.begin() + i);
-                --i;
-                continue;
+                break;
             }
-
-            // Send data and allocate new buffer
-            mInstances[i]->onData(buffer, bytesRead);
-            buffer = std::shared_ptr<char[]>(new char[bufferSize]);
         }
         mMutex.unlock();
     }
