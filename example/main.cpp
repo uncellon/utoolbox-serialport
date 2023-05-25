@@ -5,8 +5,6 @@
 using namespace UT;
 
 int main(int argc, char* argv[]) {
-    EventLoop mainLoop;
-
     SerialPort sp;
     sp.setBaudRate(SerialPort::BaudRate::k115200);
     sp.setDataBits(SerialPort::DataBits::k8);

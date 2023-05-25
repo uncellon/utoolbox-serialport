@@ -72,14 +72,13 @@ SerialPort::~SerialPort() {
 }
 
 SerialPort::Opcode SerialPort::open(const std::string& port) {
-    if (mFd != 0) {
+    if (mFd != -1) {
         return Opcode::kAlreadyOpened;
     }
 
     mFd = ::open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
 
     if (mFd == -1) {
-        mFd = 0;
         switch (errno) {
         case ENOENT:
             return Opcode::kDeviceDoesNotExist;
@@ -92,7 +91,7 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
     auto ret = ioctl(mFd, TCFLSH, TCIOFLUSH);
     if (ret == -1) {
         ::close(mFd);
-        mFd = 0;
+        mFd = -1;
         return Opcode::kBufferFlushError;
     }
 
@@ -100,7 +99,7 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
     ret = tcgetattr(mFd, &mOptions);
     if (ret == -1) {
         ::close(mFd);
-        mFd = 0;
+        mFd = -1;
         return Opcode::kFailedToGetPortOptions;
     }
 
@@ -235,7 +234,7 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
     ret = tcsetattr(mFd, TCSANOW, &mOptions);
     if (ret == -1) {
         ::close(mFd);
-        mFd = 0;
+        mFd = -1;
         return Opcode::kFailedToSetPortOptions;
     }
 
@@ -255,7 +254,7 @@ SerialPort::Opcode SerialPort::open(const std::string& port) {
 }
 
 void SerialPort::close() {
-    if (mFd == 0) {
+    if (mFd == -1) {
         return;
     }
 
@@ -275,17 +274,13 @@ void SerialPort::close() {
     }
 
     ::close(mFd);
-    mFd = 0;
+    mFd = -1;
 
     mMutex.unlock();
     mInterruptMutex.unlock();
 }
 
 SerialPort::Opcode SerialPort::write(const void* data, size_t length) {
-    if (!mFd) {
-        return Opcode::kPortNotOpened;
-    }
-
     ssize_t bytesWritten = ::write(mFd, data, length);
 
     if (bytesWritten == -1) {
@@ -368,7 +363,7 @@ void SerialPort::polling() {
 
                     // Close serial port
                     ::close(mInstances[i]->mFd);
-                    mInstances[i]->mFd = 0;
+                    mInstances[i]->mFd = -1;
                     
                     mPfds.erase(mPfds.begin() + i);
                     mInstances.erase(mInstances.begin() + i);

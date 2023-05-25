@@ -136,7 +136,7 @@ protected:
     DataBits mDataBits;
     Parity mParity;
     StopBits mStopBits;
-    int mFd = 0;
+    int mFd = -1;
     termios mOptions;
 
 }; // class SerialPort
@@ -193,7 +193,6 @@ enum class SerialPort::Opcode {
     kBufferFlushError,
     kFailedToGetPortOptions,
     kFailedToSetPortOptions,
-    kPipeFailed,
     kUndefinedError
 }; // enum class SerialPort::Opcode
 
